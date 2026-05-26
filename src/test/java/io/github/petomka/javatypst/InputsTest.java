@@ -33,8 +33,8 @@ public class InputsTest {
 
     /** Renders {@code content} with {@code inputs} and returns the trimmed extracted PDF text. */
     private static String renderText(String content, Map<String, String> inputs) throws IOException {
-        byte[] pdf =
-                JavaTypst.render(content, RenderOptions.builder().inputs(inputs).build());
+        byte[] pdf = JavaTypst.renderPdf(
+                content, RenderOptions.builder().inputs(inputs).build());
         assertNotNull(pdf, "render returned no PDF");
         assertTrue(pdf.length > 0, "render produced an empty PDF");
         try (PDDocument doc = Loader.loadPDF(pdf)) {
@@ -126,7 +126,7 @@ public class InputsTest {
 
     @Test
     public void renderWithInputsKeepsWorkingAlongsidePlainRender() throws IOException {
-        byte[] plain = JavaTypst.render("plain");
+        byte[] plain = JavaTypst.renderPdf("plain");
         try (PDDocument doc = Loader.loadPDF(plain)) {
             assertEquals("plain", new PDFTextStripper().getText(doc).strip());
         }
@@ -137,7 +137,7 @@ public class InputsTest {
     public void missingKeyAccessRaisesRenderException() {
         TypstRenderException ex = assertThrows(
                 TypstRenderException.class,
-                () -> JavaTypst.render(
+                () -> JavaTypst.renderPdf(
                         "#sys.inputs.at(\"absent\")",
                         RenderOptions.builder().inputs(Map.of("present", "1")).build()));
         assertNotNull(ex.getMessage());
@@ -151,6 +151,6 @@ public class InputsTest {
         // Builder accepts the map (it does no per-entry validation); the encoder catches the
         // null value at render time and surfaces it as an NPE.
         RenderOptions opts = RenderOptions.builder().inputs(inputs).build();
-        assertThrows(NullPointerException.class, () -> JavaTypst.render("#sys.inputs.at(\"key\")", opts));
+        assertThrows(NullPointerException.class, () -> JavaTypst.renderPdf("#sys.inputs.at(\"key\")", opts));
     }
 }

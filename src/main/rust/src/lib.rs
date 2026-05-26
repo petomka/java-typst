@@ -9,6 +9,7 @@ use flate2::read::GzDecoder;
 use tar::Archive;
 use typst::diag::{FileError, FileResult};
 use typst::foundations::{Bytes, Dict, Value};
+use typst::layout::PagedDocument;
 use typst::syntax::{FileId, Source};
 use typst_as_lib::file_resolver::FileResolver;
 use typst_as_lib::typst_kit_options::TypstKitFontOptions;
@@ -60,13 +61,13 @@ pub unsafe extern "C" fn dealloc(ptr: *mut u8, len: u32) {
 
 // ── Render export ────────────────────────────────────────────────────────────
 
-/// Renders Typst markup to a PDF, with optional `sys.inputs` and custom fonts supplied via the
-/// TLV-encoded options blob (see [`parse_options`]).
+/// Renders Typst markup and returns the result as a TLV blob (`count:u32 ⟨len:u32, bytes⟩*`).
+/// For PDF the blob is always a single entry; for SVG and PNG it's one entry per page.
 ///
 /// # Safety
 /// - `src_ptr` must point to `src_len` valid UTF-8 bytes (the Typst source) in linear memory
-/// - `opts_ptr` must point to `opts_len` valid bytes encoding the render options;
-///   `[0,0,0,0]` (or any buffer with a leading u32 field-count of 0) means "no options"
+/// - `opts_ptr` must point to `opts_len` valid bytes encoding the render options
+///   (see [`parse_options`] for the TLV layout); `[0,0,0,0]` means "no options"
 /// - `out_len` must point to a 4-byte writable location (allocated via `alloc(4)`)
 /// - The returned pointer, if non-null, must be freed via `dealloc(ptr, *out_len)`
 /// - The error string at `last_error_ptr()` is valid only until the next `render()` call
@@ -94,22 +95,30 @@ pub unsafe extern "C" fn render(
         }
     };
 
-    match compile(source, opts.inputs, opts.fonts) {
-        Ok(pdf) => write_pdf_output(pdf, out_len),
-        Err(msg) => fail(msg),
-    }
+    let doc = match compile(source, opts.inputs, opts.fonts) {
+        Ok(d) => d,
+        Err(msg) => return fail(msg),
+    };
+
+    let blobs = match emit(&doc, opts.format, opts.png_pixel_per_pt) {
+        Ok(b) => b,
+        Err(msg) => return fail(msg),
+    };
+
+    let result_blob = encode_result_blob(&blobs);
+    write_buffer(&result_blob, out_len)
 }
 
-/// Copies the PDF bytes into a freshly-allocated WASM buffer and writes its length to `out_len`.
+/// Copies `bytes` into a freshly-allocated WASM buffer and writes its length to `out_len`.
 ///
 /// # Safety
 /// Same preconditions as the `out_len` parameter of [`render`].
-unsafe fn write_pdf_output(pdf: Vec<u8>, out_len: *mut u32) -> *mut u8 {
-    let pdf_len = pdf.len();
-    *out_len = pdf_len as u32;
-    let ptr = alloc(pdf_len as u32);
+unsafe fn write_buffer(bytes: &[u8], out_len: *mut u32) -> *mut u8 {
+    let len = bytes.len();
+    *out_len = len as u32;
+    let ptr = alloc(len as u32);
     if !ptr.is_null() {
-        std::ptr::copy_nonoverlapping(pdf.as_ptr(), ptr, pdf_len);
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, len);
     }
     ptr
 }
@@ -137,7 +146,7 @@ fn compile(
     source: String,
     inputs: Option<Dict>,
     fonts: Vec<Vec<u8>>,
-) -> Result<Vec<u8>, String> {
+) -> Result<PagedDocument, String> {
     let font_options = TypstKitFontOptions::new()
         .include_system_fonts(false)
         .include_embedded_fonts(true);
@@ -152,15 +161,61 @@ fn compile(
 
     // `compile_with_input` accepts anything implementing `Into<Dict>`; a `Dict`
     // converts into itself. Without inputs, `sys.inputs` keeps its default value.
-    let doc = match inputs {
+    match inputs {
         Some(dict) => engine.compile_with_input(dict),
         None => engine.compile(),
     }
     .output
-    .map_err(|e| format!("{e}"))?;
+    .map_err(|e| format!("{e}"))
+}
 
-    typst_pdf::pdf(&doc, &PdfOptions::default())
-        .map_err(|errors| format!("{errors:?}"))
+// ── Emit ─────────────────────────────────────────────────────────────────────
+
+/// Renders the compiled document into one or more byte blobs based on the requested format.
+/// PDF produces a single blob; SVG and PNG produce one blob per page.
+fn emit(
+    doc: &PagedDocument,
+    format: OutputFormat,
+    png_pixel_per_pt: f32,
+) -> Result<Vec<Vec<u8>>, String> {
+    match format {
+        OutputFormat::Pdf => {
+            let pdf = typst_pdf::pdf(doc, &PdfOptions::default())
+                .map_err(|errors| format!("{errors:?}"))?;
+            Ok(vec![pdf])
+        }
+        OutputFormat::Svg => Ok(doc
+            .pages
+            .iter()
+            .map(|p| typst_svg::svg(p).into_bytes())
+            .collect()),
+        OutputFormat::Png => doc
+            .pages
+            .iter()
+            .map(|p| {
+                typst_render::render(p, png_pixel_per_pt)
+                    .encode_png()
+                    .map_err(|e| format!("png encode failed: {e}"))
+            })
+            .collect(),
+    }
+}
+
+/// Serializes a list of byte blobs into the TLV wire format the Java host reads back:
+///
+/// ```text
+/// count: u32                      then, repeated `count` times:
+///   len: u32     bytes: len bytes
+/// ```
+fn encode_result_blob(blobs: &[Vec<u8>]) -> Vec<u8> {
+    let total = 4 + blobs.iter().map(|b| 4 + b.len()).sum::<usize>();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(&(blobs.len() as u32).to_le_bytes());
+    for blob in blobs {
+        out.extend_from_slice(&(blob.len() as u32).to_le_bytes());
+        out.extend_from_slice(blob);
+    }
+    out
 }
 
 // ── Options decoding ─────────────────────────────────────────────────────────
@@ -169,31 +224,61 @@ fn compile(
 /// (and teaching `parse_options` how to dispatch it) — never a new WASM export.
 const TAG_INPUTS: u32 = 1;
 const TAG_FONTS: u32 = 2;
+const TAG_OUTPUT_FORMAT: u32 = 3;
+const TAG_PNG_PIXEL_PER_PT: u32 = 4;
+
+/// Output formats the host can request. Values are part of the wire format and must match
+/// the Java side's constants.
+#[derive(Clone, Copy, PartialEq)]
+enum OutputFormat {
+    Pdf = 1,
+    Svg = 2,
+    Png = 3,
+}
+
+impl OutputFormat {
+    fn from_wire(v: u32) -> Result<Self, String> {
+        match v {
+            1 => Ok(OutputFormat::Pdf),
+            2 => Ok(OutputFormat::Svg),
+            3 => Ok(OutputFormat::Png),
+            other => Err(format!("options: unknown output format {other}")),
+        }
+    }
+}
 
 /// Decoded render options. Fields absent from the blob keep their natural defaults
-/// (no `sys.inputs` injection, no custom fonts).
-struct RenderOptions {
+/// (no `sys.inputs` injection, no custom fonts, PDF output, 2.0 px/pt for PNG).
+struct DecodedOptions {
     inputs: Option<Dict>,
     fonts: Vec<Vec<u8>>,
+    format: OutputFormat,
+    png_pixel_per_pt: f32,
+}
+
+impl Default for DecodedOptions {
+    fn default() -> Self {
+        DecodedOptions {
+            inputs: None,
+            fonts: Vec::new(),
+            format: OutputFormat::Pdf,
+            png_pixel_per_pt: 2.0,
+        }
+    }
 }
 
 /// Decodes the render-options blob produced by the Java host:
 ///
 /// ```text
-/// field_count: u32                            then, repeated `field_count` times:
-///   tag: u32      1 = inputs, 2 = fonts
+/// field_count: u32                                  then, repeated `field_count` times:
+///   tag: u32      1 = inputs, 2 = fonts, 3 = output format, 4 = png_pixel_per_pt
 ///   len: u32      length of `payload` in bytes
-///   payload: bytes   tag-specific (see `parse_inputs` / `parse_fonts`)
+///   payload: bytes  tag-specific (see parse_inputs / parse_fonts / OutputFormat)
 /// ```
 ///
-/// An empty buffer is treated identically to a buffer whose first u32 is zero — both mean
-/// "no options". Unknown tags are an error so a stale WASM never silently drops a field
-/// from a newer host.
-fn parse_options(bytes: &[u8]) -> Result<RenderOptions, String> {
-    let mut opts = RenderOptions {
-        inputs: None,
-        fonts: Vec::new(),
-    };
+/// Unknown tags are an error so a stale WASM never silently drops a field from a newer host.
+fn parse_options(bytes: &[u8]) -> Result<DecodedOptions, String> {
+    let mut opts = DecodedOptions::default();
     if bytes.is_empty() {
         return Ok(opts);
     }
@@ -211,6 +296,20 @@ fn parse_options(bytes: &[u8]) -> Result<RenderOptions, String> {
         match tag {
             TAG_INPUTS => opts.inputs = Some(parse_inputs(payload)?),
             TAG_FONTS => opts.fonts = parse_fonts(payload)?,
+            TAG_OUTPUT_FORMAT => {
+                if payload.len() != 4 {
+                    return Err(format!("options: format payload must be 4 bytes, got {}", payload.len()));
+                }
+                let id = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                opts.format = OutputFormat::from_wire(id)?;
+            }
+            TAG_PNG_PIXEL_PER_PT => {
+                if payload.len() != 4 {
+                    return Err(format!("options: png_pixel_per_pt payload must be 4 bytes, got {}", payload.len()));
+                }
+                opts.png_pixel_per_pt =
+                    f32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
+            }
             other => return Err(format!("options: unknown tag {other}")),
         }
         pos = end;

@@ -24,7 +24,7 @@ public class BasicTest {
 
     @Test
     public void test() throws IOException {
-        byte[] pdfBytes = JavaTypst.render(TYPST_CONTENT);
+        byte[] pdfBytes = JavaTypst.renderPdf(TYPST_CONTENT);
 
         PDDocument doc = Loader.loadPDF(pdfBytes);
         assertEquals(1, doc.getNumberOfPages());
@@ -36,7 +36,7 @@ public class BasicTest {
     @Test
     public void testInvalidMarkupThrowsException() {
         // Incomplete let expression is a hard syntax error in typst
-        TypstRenderException ex = assertThrows(TypstRenderException.class, () -> JavaTypst.render("#let x ="));
+        TypstRenderException ex = assertThrows(TypstRenderException.class, () -> JavaTypst.renderPdf("#let x ="));
         assertNotNull(ex.getMessage());
         assertFalse(ex.getMessage().isBlank());
     }
@@ -46,7 +46,7 @@ public class BasicTest {
         // Empty packages map — air-gapped mode, no HTTP fallback — missing package must throw
         assertThrows(
                 TypstRenderException.class,
-                () -> JavaTypst.render(
+                () -> JavaTypst.renderPdf(
                         "#import \"@preview/example:0.1.0\": *\n= Hello",
                         RenderOptions.builder().packages(Map.of()).build()));
     }
@@ -80,7 +80,7 @@ public class BasicTest {
         org.junit.jupiter.api.Assumptions.assumeTrue(
                 "true".equalsIgnoreCase(System.getProperty("packages.online")),
                 "Skipped: run with -Dpackages.online=true to enable online package test");
-        byte[] pdf = JavaTypst.render(
+        byte[] pdf = JavaTypst.renderPdf(
                 "#import \"@preview/cetz:0.3.2\": canvas, draw\n" + "#canvas({ draw.circle((0,0), radius: 1) })");
         assertNotNull(pdf);
         assertTrue(pdf.length > 0);
@@ -96,7 +96,7 @@ public class BasicTest {
         RenderOptions opts = RenderOptions.builder()
                 .packages(Map.of("@preview/testpkg:0.1.0", tarGz))
                 .build();
-        byte[] pdf = JavaTypst.render("#import \"@preview/testpkg:0.1.0\": hello\n#hello()", opts);
+        byte[] pdf = JavaTypst.renderPdf("#import \"@preview/testpkg:0.1.0\": hello\n#hello()", opts);
         assertNotNull(pdf);
         assertTrue(pdf.length > 0);
     }

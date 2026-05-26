@@ -50,7 +50,7 @@ public class FontsTest {
 
     /** Renders {@code content} with the given fonts list and returns the produced PDF. */
     private static byte[] renderWithFonts(String content, List<byte[]> fonts) {
-        return JavaTypst.render(content, RenderOptions.builder().fonts(fonts).build());
+        return JavaTypst.renderPdf(content, RenderOptions.builder().fonts(fonts).build());
     }
 
     /** Returns every PostScript font name embedded across all pages of the PDF. */
@@ -136,7 +136,7 @@ public class FontsTest {
         // Verifies that the new code path does not leave the shared engine in a state that breaks
         // subsequent plain renders.
         renderWithFonts("#set text(font: \"" + FONT_FAMILY + "\")\nseed", List.of(customFont));
-        byte[] plain = JavaTypst.render("= Plain");
+        byte[] plain = JavaTypst.renderPdf("= Plain");
         assertEquals("Plain", pdfText(plain));
     }
 

@@ -70,8 +70,8 @@ public class RenderOptionsTest {
     @Test
     public void defaultOptionsRendersIdenticallyToTheNoOptionsOverload() throws IOException {
         String src = "= Same Output";
-        byte[] viaNoOptions = JavaTypst.render(src);
-        byte[] viaDefault = JavaTypst.render(src, RenderOptions.DEFAULT);
+        byte[] viaNoOptions = JavaTypst.renderPdf(src);
+        byte[] viaDefault = JavaTypst.renderPdf(src, RenderOptions.DEFAULT);
         // Compare extracted text rather than bytes, since PDFs can differ in metadata trivia.
         assertEquals(pdfText(viaNoOptions), pdfText(viaDefault));
     }
@@ -79,8 +79,8 @@ public class RenderOptionsTest {
     @Test
     public void defaultIsAReusableSharedInstance() throws IOException {
         // DEFAULT is a singleton; using it twice in a row must not raise nor mutate anything.
-        assertEquals("first", pdfText(JavaTypst.render("first", RenderOptions.DEFAULT)));
-        assertEquals("second", pdfText(JavaTypst.render("second", RenderOptions.DEFAULT)));
+        assertEquals("first", pdfText(JavaTypst.renderPdf("first", RenderOptions.DEFAULT)));
+        assertEquals("second", pdfText(JavaTypst.renderPdf("second", RenderOptions.DEFAULT)));
     }
 
     /**
@@ -95,7 +95,7 @@ public class RenderOptionsTest {
                 .fonts(List.of(customFont))
                 .build();
         byte[] pdf =
-                JavaTypst.render("#set text(font: \"TeX Gyre Cursor\")\n#sys.inputs.at(\"greeting\"), Welt!", opts);
+                JavaTypst.renderPdf("#set text(font: \"TeX Gyre Cursor\")\n#sys.inputs.at(\"greeting\"), Welt!", opts);
 
         // sys.inputs flowed through:
         assertEquals("Hallo, Welt!", pdfText(pdf));
@@ -118,7 +118,7 @@ public class RenderOptionsTest {
                 .packages(Map.of("@preview/testpkg:0.1.0", testPkgTarGz))
                 .build();
 
-        byte[] pdf = JavaTypst.render(
+        byte[] pdf = JavaTypst.renderPdf(
                 "#import \"@preview/testpkg:0.1.0\": hello\n"
                         + "#set text(font: \"TeX Gyre Cursor\")\n"
                         + "#hello() #sys.inputs.at(\"name\")",
@@ -139,17 +139,17 @@ public class RenderOptionsTest {
         RenderOptions opts = RenderOptions.builder().packages(Map.of()).build();
         assertThrows(
                 TypstRenderException.class,
-                () -> JavaTypst.render("#import \"@preview/example:0.1.0\": *\n= hi", opts));
+                () -> JavaTypst.renderPdf("#import \"@preview/example:0.1.0\": *\n= hi", opts));
     }
 
     @Test
     public void nullContentIsRejected() {
-        assertThrows(NullPointerException.class, () -> JavaTypst.render(null, RenderOptions.DEFAULT));
+        assertThrows(NullPointerException.class, () -> JavaTypst.renderPdf(null, RenderOptions.DEFAULT));
     }
 
     @Test
     public void nullOptionsIsRejected() {
-        assertThrows(NullPointerException.class, () -> JavaTypst.render("x", null));
+        assertThrows(NullPointerException.class, () -> JavaTypst.renderPdf("x", null));
     }
 
     @Test

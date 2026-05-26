@@ -15,6 +15,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -35,10 +36,16 @@ public final class JavaTypst {
 
     private static volatile boolean aotEnabled = false;
 
-    // ── Tag values for the TLV options blob (must mirror lib.rs) ─────────────
+    // ── TLV tag and output-format wire constants (must mirror lib.rs) ────────
 
     private static final int TAG_INPUTS = 1;
     private static final int TAG_FONTS = 2;
+    private static final int TAG_OUTPUT_FORMAT = 3;
+    private static final int TAG_PNG_PIXEL_PER_PT = 4;
+
+    private static final int FORMAT_PDF = 1;
+    private static final int FORMAT_SVG = 2;
+    private static final int FORMAT_PNG = 3;
 
     // ── Package resolution configuration ─────────────────────────────────────
 
@@ -58,7 +65,7 @@ public final class JavaTypst {
 
     /**
      * Replaces the package resolver used for HTTP downloads.
-     * Must be called before the first {@link #render} if you also call
+     * Must be called before the first render if you also call
      * {@link #setPackageCacheDirectory}; otherwise may be called at any time.
      */
     public static void setPackageResolver(TypstPackageResolver resolver) {
@@ -70,7 +77,7 @@ public final class JavaTypst {
 
     /**
      * Overrides the disk cache directory (default: {@code $XDG_CACHE_HOME/java-typst/packages}).
-     * Must be called before the first {@link #render} call.
+     * Must be called before the first render call.
      */
     public static void setPackageCacheDirectory(Path dir) {
         if (dir == null) throw new NullPointerException("dir");
@@ -83,7 +90,7 @@ public final class JavaTypst {
     }
 
     /**
-     * Switches to the AOT-compiled machine. Must be called before the first {@link #render}.
+     * Switches to the AOT-compiled machine. Must be called before the first render.
      */
     public static void enableAot() {
         synchronized (LOCK) {
@@ -111,24 +118,19 @@ public final class JavaTypst {
     // ── Public render API ─────────────────────────────────────────────────────
 
     /**
-     * Renders Typst markup to a PDF with default options (no {@code sys.inputs}, no custom
-     * fonts, HTTP package fallback). Shorthand for
-     * {@code render(content, RenderOptions.DEFAULT)}.
+     * Renders Typst markup to a PDF with default options. Shorthand for
+     * {@code renderPdf(content, RenderOptions.DEFAULT)}.
      *
      * @param content Typst source (must not be null)
      * @return PDF as a byte array
      * @throws TypstRenderException if compilation fails
      */
-    public static byte[] render(String content) {
-        return render(content, RenderOptions.DEFAULT);
+    public static byte[] renderPdf(String content) {
+        return renderPdf(content, RenderOptions.DEFAULT);
     }
 
     /**
      * Renders Typst markup to a PDF with the given options.
-     *
-     * <p>This is the single render entry point: every optional feature — {@code sys.inputs},
-     * custom fonts, air-gapped package maps, and anything we add in the future — flows in
-     * through {@link RenderOptions}. There is no cartesian product of overloads.
      *
      * @param content Typst source (must not be null)
      * @param options render options (must not be null; use {@link RenderOptions#DEFAULT} for none)
@@ -136,26 +138,69 @@ public final class JavaTypst {
      * @throws TypstRenderException if compilation fails or a required package is absent from an
      *                              air-gapped package map
      */
-    public static byte[] render(String content, RenderOptions options) {
-        if (content == null) throw new NullPointerException("content");
-        if (options == null) throw new NullPointerException("options");
-        byte[] optsBlob = encodeOptions(options);
-        Map<String, byte[]> airGappedPackages = options.packagesOrNull();
-        synchronized (LOCK) {
-            Map<String, byte[]> urlMap = null;
-            if (airGappedPackages != null) {
-                urlMap = new HashMap<>();
-                for (Map.Entry<String, byte[]> e : airGappedPackages.entrySet()) {
-                    urlMap.put(specToUrl(e.getKey()), e.getValue());
-                }
-            }
-            currentPackageUrlMap = urlMap;
-            try {
-                return renderUnderLock(content, optsBlob);
-            } finally {
-                currentPackageUrlMap = null;
-            }
+    public static byte[] renderPdf(String content, RenderOptions options) {
+        List<byte[]> result = executeRender(content, options, FORMAT_PDF);
+        if (result.size() != 1) {
+            throw new IllegalStateException("PDF render produced " + result.size() + " blobs, expected 1");
         }
+        return result.get(0);
+    }
+
+    /**
+     * Renders Typst markup to a list of SVG documents, one per page, with default options.
+     * Shorthand for {@code renderSvg(content, RenderOptions.DEFAULT)}.
+     *
+     * @param content Typst source (must not be null)
+     * @return one UTF-8 SVG document per page, in document order
+     * @throws TypstRenderException if compilation fails
+     */
+    public static List<byte[]> renderSvg(String content) {
+        return renderSvg(content, RenderOptions.DEFAULT);
+    }
+
+    /**
+     * Renders Typst markup to a list of SVG documents, one per page, with the given options.
+     *
+     * <p>Each list entry is a complete, standalone SVG document encoded as UTF-8. Typst renders
+     * text as path outlines, not as {@code <text>} elements, so the resulting SVG is portable but
+     * not text-searchable.
+     *
+     * @param content Typst source (must not be null)
+     * @param options render options (must not be null; use {@link RenderOptions#DEFAULT} for none)
+     * @return one UTF-8 SVG document per page, in document order
+     * @throws TypstRenderException if compilation fails or a required package is absent from an
+     *                              air-gapped package map
+     */
+    public static List<byte[]> renderSvg(String content, RenderOptions options) {
+        return executeRender(content, options, FORMAT_SVG);
+    }
+
+    /**
+     * Renders Typst markup to a list of PNG images, one per page, with default options.
+     * Shorthand for {@code renderPng(content, RenderOptions.DEFAULT)}.
+     *
+     * <p>Pixel density defaults to {@link RenderOptions#DEFAULT_PNG_PIXEL_PER_PT} (≈ 144 DPI);
+     * override via {@link RenderOptions.Builder#pngPixelPerPt}.
+     *
+     * @param content Typst source (must not be null)
+     * @return one PNG image per page, in document order
+     * @throws TypstRenderException if compilation fails
+     */
+    public static List<byte[]> renderPng(String content) {
+        return renderPng(content, RenderOptions.DEFAULT);
+    }
+
+    /**
+     * Renders Typst markup to a list of PNG images, one per page, with the given options.
+     *
+     * @param content Typst source (must not be null)
+     * @param options render options (must not be null; use {@link RenderOptions#DEFAULT} for none)
+     * @return one PNG image per page, in document order
+     * @throws TypstRenderException if compilation fails or a required package is absent from an
+     *                              air-gapped package map
+     */
+    public static List<byte[]> renderPng(String content, RenderOptions options) {
+        return executeRender(content, options, FORMAT_PNG);
     }
 
     // ── Initialization ────────────────────────────────────────────────────────
@@ -227,6 +272,36 @@ public final class JavaTypst {
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
+    /**
+     * Single entry point shared by {@link #renderPdf}, {@link #renderSvg}, {@link #renderPng}.
+     * Encodes the options blob (including the chosen format), takes the WASM lock, calls the
+     * single {@code render} export, and parses the TLV result into one byte array per output
+     * blob (one for PDF, one per page for SVG/PNG).
+     */
+    private static List<byte[]> executeRender(String content, RenderOptions options, int formatId) {
+        if (content == null) throw new NullPointerException("content");
+        if (options == null) throw new NullPointerException("options");
+        byte[] optsBlob = encodeOptions(options, formatId);
+        Map<String, byte[]> airGappedPackages = options.packagesOrNull();
+        synchronized (LOCK) {
+            Map<String, byte[]> urlMap = null;
+            if (airGappedPackages != null) {
+                urlMap = new HashMap<>();
+                for (Map.Entry<String, byte[]> e : airGappedPackages.entrySet()) {
+                    urlMap.put(specToUrl(e.getKey()), e.getValue());
+                }
+            }
+            currentPackageUrlMap = urlMap;
+            try {
+                byte[] resultBlob = renderUnderLock(content, optsBlob);
+                return decodeResultBlob(resultBlob);
+            } finally {
+                currentPackageUrlMap = null;
+            }
+        }
+    }
+
+    /** Caller must hold LOCK. Returns the raw TLV result blob produced by the WASM render. */
     private static byte[] renderUnderLock(String content, byte[] optsBlob) {
         ensureInitialized();
         Memory memory = instance.memory();
@@ -248,9 +323,9 @@ public final class JavaTypst {
                 throw new TypstRenderException(errorMsg);
             }
             int outLen = memory.readInt(outLenPtr);
-            byte[] pdfBytes = memory.readBytes(outPtr, outLen);
+            byte[] resultBytes = memory.readBytes(outPtr, outLen);
             deallocFn.apply(outPtr, outLen);
-            return pdfBytes;
+            return resultBytes;
         } finally {
             deallocFn.apply(outLenPtr, 4);
             deallocFn.apply(optsPtr, optsLen);
@@ -260,20 +335,21 @@ public final class JavaTypst {
     }
 
     /**
-     * Encodes a {@link RenderOptions} into the TLV blob consumed by the {@code render} WASM
-     * export. Layout:
+     * Encodes a {@link RenderOptions} plus the chosen format into the TLV blob consumed by the
+     * {@code render} WASM export. Layout:
      *
      * <pre>
      * field_count:u32   then, repeated field_count times:
-     *   tag:u32   1 = inputs, 2 = fonts
+     *   tag:u32   1 = inputs, 2 = fonts, 3 = output format, 4 = png_pixel_per_pt
      *   len:u32   length of the payload in bytes
-     *   payload:bytes   tag-specific (see encodeInputs / encodeFonts)
+     *   payload:bytes   tag-specific (see encodeInputs / encodeFonts / encodeFormat / encodeFloat)
      * </pre>
      *
-     * Empty fields are omitted entirely — an empty inputs map or an empty fonts list does not
-     * contribute a TLV record, so a default {@link RenderOptions} produces just {@code [0,0,0,0]}.
+     * Empty optional fields (inputs / fonts) are omitted entirely. The output format and PNG
+     * density tags are always emitted so the wire format is unambiguous and changes to Rust-side
+     * defaults can never surprise the host.
      */
-    private static byte[] encodeOptions(RenderOptions options) {
+    private static byte[] encodeOptions(RenderOptions options, int formatId) {
         ByteArrayOutputStream fields = new ByteArrayOutputStream();
         int fieldCount = 0;
 
@@ -291,6 +367,16 @@ public final class JavaTypst {
             fields.writeBytes(payload);
             fieldCount++;
         }
+        // Output format — always emitted.
+        writeLittleEndianInt(fields, TAG_OUTPUT_FORMAT);
+        writeLittleEndianInt(fields, 4);
+        writeLittleEndianInt(fields, formatId);
+        fieldCount++;
+        // PNG pixel-per-point — always emitted (ignored by non-PNG formats on the Rust side).
+        writeLittleEndianInt(fields, TAG_PNG_PIXEL_PER_PT);
+        writeLittleEndianInt(fields, 4);
+        writeLittleEndianInt(fields, Float.floatToRawIntBits(options.pngPixelPerPt()));
+        fieldCount++;
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         writeLittleEndianInt(out, fieldCount);
@@ -340,6 +426,42 @@ public final class JavaTypst {
         out.write((value >>> 8) & 0xFF);
         out.write((value >>> 16) & 0xFF);
         out.write((value >>> 24) & 0xFF);
+    }
+
+    /**
+     * Decodes the TLV result blob produced by the WASM {@code render} export:
+     * {@code count:u32 ⟨len:u32, bytes⟩*}. Returns one byte array per blob, in order.
+     */
+    private static List<byte[]> decodeResultBlob(byte[] blob) {
+        List<byte[]> result = new ArrayList<>();
+        int pos = 0;
+        if (blob.length < 4) {
+            throw new TypstRenderException("render result truncated: " + blob.length + " bytes");
+        }
+        int count = readLittleEndianInt(blob, pos);
+        pos += 4;
+        for (int i = 0; i < count; i++) {
+            if (pos + 4 > blob.length) {
+                throw new TypstRenderException("render result truncated reading blob length");
+            }
+            int len = readLittleEndianInt(blob, pos);
+            pos += 4;
+            if (pos + len > blob.length) {
+                throw new TypstRenderException("render result truncated reading blob payload");
+            }
+            byte[] item = new byte[len];
+            System.arraycopy(blob, pos, item, 0, len);
+            pos += len;
+            result.add(item);
+        }
+        return result;
+    }
+
+    private static int readLittleEndianInt(byte[] buf, int pos) {
+        return (buf[pos] & 0xFF)
+                | ((buf[pos + 1] & 0xFF) << 8)
+                | ((buf[pos + 2] & 0xFF) << 16)
+                | ((buf[pos + 3] & 0xFF) << 24);
     }
 
     private static byte[] fetchPackage(String url) throws TypstPackageNotFoundException {

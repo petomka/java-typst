@@ -152,7 +152,7 @@ public class ConcurrencyTest {
         runConcurrently(THREADS, tid -> {
             for (int i = 0; i < ITERATIONS; i++) {
                 String expected = "thread" + tid + "-iter" + i;
-                byte[] pdf = JavaTypst.render(expected);
+                byte[] pdf = JavaTypst.renderPdf(expected);
                 assertEquals(expected, pdfText(pdf));
             }
         });
@@ -166,7 +166,7 @@ public class ConcurrencyTest {
         runConcurrently(THREADS, tid -> {
             for (int i = 0; i < ITERATIONS; i++) {
                 String expected = "tid=" + tid + "/iter=" + i;
-                byte[] pdf = JavaTypst.render(
+                byte[] pdf = JavaTypst.renderPdf(
                         "#sys.inputs.at(\"k\")",
                         RenderOptions.builder().inputs(Map.of("k", expected)).build());
                 assertEquals(expected, pdfText(pdf));
@@ -183,7 +183,7 @@ public class ConcurrencyTest {
             boolean useCustom = tid % 2 == 0;
             List<byte[]> fonts = useCustom ? List.of(customFont) : List.of();
             for (int i = 0; i < ITERATIONS; i++) {
-                byte[] pdf = JavaTypst.render(
+                byte[] pdf = JavaTypst.renderPdf(
                         "#set text(font: \"TeX Gyre Cursor\")\nrun-" + tid,
                         RenderOptions.builder().fonts(fonts).build());
                 boolean present = embeddedFontNames(pdf).stream().anyMatch(n -> n.contains("TeXGyreCursor"));
@@ -201,15 +201,15 @@ public class ConcurrencyTest {
                 String tag = "t" + tid + "i" + i;
                 byte[] pdf =
                         switch (tid % 3) {
-                            case 0 -> JavaTypst.render(tag);
+                            case 0 -> JavaTypst.renderPdf(tag);
                             case 1 ->
-                                JavaTypst.render(
+                                JavaTypst.renderPdf(
                                         "#sys.inputs.at(\"v\")",
                                         RenderOptions.builder()
                                                 .inputs(Map.of("v", tag))
                                                 .build());
                             default ->
-                                JavaTypst.render(
+                                JavaTypst.renderPdf(
                                         tag,
                                         RenderOptions.builder()
                                                 .fonts(List.of(customFont))
@@ -232,17 +232,17 @@ public class ConcurrencyTest {
             for (int i = 0; i < ITERATIONS; i++) {
                 if (tid % 2 == 0) {
                     String tag = "ok-" + tid + "-" + i;
-                    assertEquals(tag, pdfText(JavaTypst.render(tag)));
+                    assertEquals(tag, pdfText(JavaTypst.renderPdf(tag)));
                     okCount.incrementAndGet();
                 } else {
-                    assertThrows(TypstRenderException.class, () -> JavaTypst.render("#let x ="));
+                    assertThrows(TypstRenderException.class, () -> JavaTypst.renderPdf("#let x ="));
                     failCount.incrementAndGet();
                 }
             }
         });
         assertEquals(THREADS * ITERATIONS, okCount.get());
         assertEquals(THREADS * ITERATIONS, failCount.get());
-        assertEquals("after-storm", pdfText(JavaTypst.render("after-storm")));
+        assertEquals("after-storm", pdfText(JavaTypst.renderPdf("after-storm")));
     }
 
     @Test
@@ -254,7 +254,7 @@ public class ConcurrencyTest {
         JavaTypst.reset();
         JavaTypst.enableAot();
         runConcurrently(THREADS * 2, tid -> {
-            byte[] pdf = JavaTypst.render("init-" + tid);
+            byte[] pdf = JavaTypst.renderPdf("init-" + tid);
             assertEquals("init-" + tid, pdfText(pdf));
         });
     }
@@ -264,7 +264,7 @@ public class ConcurrencyTest {
         // After any thread has caused initialization, calling `enableAot()` from any other
         // thread must throw IllegalStateException — the guard is global to the engine, not
         // scoped to a single thread.
-        JavaTypst.render("warmup");
+        JavaTypst.renderPdf("warmup");
         ExecutorService pool = Executors.newSingleThreadExecutor();
         try {
             Future<?> f = pool.submit((Runnable) JavaTypst::enableAot);
@@ -291,7 +291,7 @@ public class ConcurrencyTest {
 
         // Make sure init has already happened so the contested code path is just the render,
         // not the one-shot initialization that also runs under LOCK.
-        JavaTypst.render("warmup");
+        JavaTypst.renderPdf("warmup");
 
         CountDownLatch otherStarted = new CountDownLatch(1);
         AtomicBoolean otherCompleted = new AtomicBoolean();
@@ -300,7 +300,7 @@ public class ConcurrencyTest {
             other = new Thread(
                     () -> {
                         otherStarted.countDown();
-                        JavaTypst.render("blocked");
+                        JavaTypst.renderPdf("blocked");
                         otherCompleted.set(true);
                     },
                     "concurrency-test-blocked-renderer");

@@ -28,7 +28,7 @@ public class AotBenchmarkTest {
         long[] times = new long[RUNS];
         for (int i = 0; i < RUNS; i++) {
             long start = System.nanoTime();
-            byte[] pdf = JavaTypst.render(CONTENT);
+            byte[] pdf = JavaTypst.renderPdf(CONTENT);
             times[i] = (System.nanoTime() - start) / 1_000_000;
             assertNotNull(pdf);
             assertTrue(pdf.length > 0);
