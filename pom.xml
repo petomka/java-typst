@@ -4,7 +4,7 @@
 
     <groupId>io.github.petomka</groupId>
     <artifactId>java-typst</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <packaging>jar</packaging>
     <licenses>
         <license>
@@ -134,10 +134,10 @@
                                 </goals>
                                 <configuration>
                                     <target>
-                                        <mkdir dir="${project.build.outputDirectory}/io/github/fatihcatalkaya/javatypst"/>
+                                        <mkdir dir="${project.build.outputDirectory}/io/github/petomka/javatypst"/>
                                         <copy
                                                 file="${project.basedir}/src/main/rust/target/wasm32-wasip1/release/java_typst_opt.wasm"
-                                                tofile="${project.build.outputDirectory}/io/github/fatihcatalkaya/javatypst/java_typst.wasm"/>
+                                                tofile="${project.build.outputDirectory}/io/github/petomka/javatypst/java_typst.wasm"/>
                                     </target>
                                 </configuration>
                             </execution>
@@ -157,8 +157,8 @@
                                     <wasmFile>
                                         ${project.basedir}/src/main/rust/target/wasm32-wasip1/release/java_typst_opt.wasm
                                     </wasmFile>
-                                    <name>io.github.fatihcatalkaya.javatypst.JavaTypstModule</name>
-                                    <moduleInterface>io.github.fatihcatalkaya.javatypst.JavaTypstInterface
+                                    <name>io.github.petomka.javatypst.JavaTypstModule</name>
+                                    <moduleInterface>io.github.petomka.javatypst.JavaTypstInterface
                                     </moduleInterface>
                                     <interpreterFallback>WARN</interpreterFallback>
                                 </configuration>

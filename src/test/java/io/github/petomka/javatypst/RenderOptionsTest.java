@@ -1,4 +1,4 @@
-package io.github.fatihcatalkaya.javatypst;
+package io.github.petomka.javatypst;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;

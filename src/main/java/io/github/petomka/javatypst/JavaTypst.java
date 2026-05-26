@@ -1,4 +1,4 @@
-package io.github.fatihcatalkaya.javatypst;
+package io.github.petomka.javatypst;
 
 import com.dylibso.chicory.runtime.ExportFunction;
 import com.dylibso.chicory.runtime.HostFunction;
@@ -207,7 +207,7 @@ public final class JavaTypst {
                         .build();
             } else {
                 try (InputStream stream =
-                        JavaTypst.class.getResourceAsStream("/io/github/fatihcatalkaya/javatypst/java_typst.wasm")) {
+                        JavaTypst.class.getResourceAsStream("/io/github/petomka/javatypst/java_typst.wasm")) {
                     if (stream == null) throw new RuntimeException("java_typst.wasm not found on classpath");
                     var store = new Store().addFunction(wasi.toHostFunctions()).addFunction(fetchFn);
                     newInstance = store.instantiate("java-typst", Parser.parse(stream));

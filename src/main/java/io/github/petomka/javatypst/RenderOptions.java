@@ -1,4 +1,4 @@
-package io.github.fatihcatalkaya.javatypst;
+package io.github.petomka.javatypst;
 
 import java.util.List;
 import java.util.Map;

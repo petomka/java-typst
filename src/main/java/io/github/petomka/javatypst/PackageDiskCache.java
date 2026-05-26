@@ -1,4 +1,4 @@
-package io.github.fatihcatalkaya.javatypst;
+package io.github.petomka.javatypst;
 
 import java.io.IOException;
 import java.nio.file.Files;

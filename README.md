@@ -22,7 +22,7 @@ published under a different Maven coordinate. It adds:
 <dependency>
     <groupId>io.github.petomka</groupId>
     <artifactId>java-typst</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
 </dependency>
 ```
 
